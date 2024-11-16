@@ -1,21 +1,33 @@
 // SPDX-License-Identifier: MIT
-pragma solidity ^0.8.17;
+pragma solidity ^0.8.19;
 
-import "./interfaces/IETHRegistrarController.sol";
-import "./interfaces/IBaseRegistrar.sol";
-import "./interfaces/IPriceOracle.sol";
+interface IETHRegistrarController {
+    struct Price {
+        uint256 base;
+        uint256 premium;
+    }
+    function rentPrice(string memory, uint256) external view returns (Price memory);
+    function renew(string memory name, uint256 duration) external payable;
+}
+
+interface IBaseRegistrar {
+    function nameExpires(uint256 id) external view returns (uint256);
+}
 
 contract MessageVerification {
+    string public constant PREFIX = "RENEW_NAME";
     mapping(address => uint256) public messageCount;
     mapping(address => mapping(uint256 => string[])) private userMessages;
     mapping(address => mapping(uint256 => uint256)) private messageValues;
-
     IBaseRegistrar public constant baseregistrar = IBaseRegistrar(0x57f1887a8BF19b14fC0dF6Fd9B2acc9Af147eA85);
     IETHRegistrarController public constant controller = IETHRegistrarController(0xFED6a969AaA60E4961FCD3EBF1A2e8913ac65B72);
     uint256 public constant RENEW_DURATION = 365 days;
 
+    constructor() { }
+
     function getNamePrice(string calldata name) public view returns (uint256) {
-        return controller.rentPrice(name, RENEW_DURATION).base;
+        IETHRegistrarController.Price memory price = controller.rentPrice(name, RENEW_DURATION);
+        return price.base;
     }
 
     function getNameExpiry(string calldata name) public view returns (uint256) {
@@ -25,8 +37,7 @@ contract MessageVerification {
 
     function verifyAndStoreMessage(string[] calldata names, uint256 value, bytes calldata signature) external payable {
         require(names.length > 0, "Empty names array");
-        string memory prefix = "RENEW_NAME";
-        bytes32 messageHash = keccak256(abi.encode(prefix, names, value));
+        bytes32 messageHash = keccak256(abi.encode(PREFIX, names, value));
         bytes32 ethSignedMessageHash = keccak256(abi.encodePacked("\x19Ethereum Signed Message:\n32", messageHash));
         
         address signer = recoverSigner(ethSignedMessageHash, signature);
@@ -34,9 +45,9 @@ contract MessageVerification {
         
         uint256 total = 0;
         for(uint i = 0; i < names.length; i++) {
-            uint256 price = controller.rentPrice(names[i], RENEW_DURATION).base;
-            total += price;
-            controller.renew{value: price}(names[i], RENEW_DURATION);
+            IETHRegistrarController.Price memory price = controller.rentPrice(names[i], RENEW_DURATION);
+            total += price.base;
+            controller.renew{value: price.base}(names[i], RENEW_DURATION);
         }
         require(msg.value >= total, "Insufficient ETH sent");
         
@@ -49,7 +60,8 @@ contract MessageVerification {
         messageCount[msg.sender]++;
         
         if(msg.value > total) {
-            payable(msg.sender).transfer(msg.value - total);
+            (bool success, ) = msg.sender.call{value: msg.value - total}("");
+            require(success, "ETH refund failed");
         }
     }
 
