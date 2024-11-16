@@ -2,11 +2,10 @@ import { Button, Card, Helper, Tag, Typography } from "@ensdomains/thorin";
 import { useQuery } from "@tanstack/react-query";
 import { createLazyFileRoute } from "@tanstack/react-router";
 import { match } from "ts-pattern";
-import { useAccount } from "wagmi";
 import { Header } from "../components/Header";
 import { Action } from "../types";
 
-export const Route = createLazyFileRoute("/")({
+export const Route = createLazyFileRoute("/list")({
     component: Index,
 });
 
@@ -19,7 +18,7 @@ export const Route = createLazyFileRoute("/")({
  */
 
 // eslint-disable-next-line @typescript-eslint/no-unused-vars
-const getActions = async (owner: string): Promise<Action[]> => {
+const getAllActions = async (owner: string): Promise<Action[]> => {
     // Temporary storage of actions in local storage
     const stored = localStorage.getItem("actions");
     if (!stored) {
@@ -27,8 +26,7 @@ const getActions = async (owner: string): Promise<Action[]> => {
     }
 
     try {
-        const actions = JSON.parse(stored) as Action[];
-        return actions.filter((action) => action.owner === owner);
+        return JSON.parse(stored) as Action[];
     } catch {
         return [];
     }
@@ -56,10 +54,9 @@ const ActionRow = ({ action }: { action: Action }) => {
 };
 
 function Index() {
-    const { address } = useAccount();
     const { data: actions } = useQuery({
         queryKey: ["actions", "all"],
-        queryFn: () => getActions(address ?? "0x0"),
+        queryFn: () => getAllActions("0x0"),
     });
 
     return (
@@ -70,15 +67,13 @@ function Index() {
                 when needed.
             </Typography>
             <hr />
-            <Card title="Your Actions">
+            <Card title="All Actions">
                 <ul>
                     {actions?.map((action) => (
                         <ActionRow key={action.type} action={action} />
                     ))}
                 </ul>
-                {actions?.length === 0 && (
-                    <Helper>You have not created any actions yet</Helper>
-                )}
+                {actions?.length === 0 && <Helper>No actions found</Helper>}
                 <Button as={"a"} href="/action/new">
                     Create New Action
                 </Button>
