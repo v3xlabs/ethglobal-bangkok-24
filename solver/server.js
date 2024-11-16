@@ -1,242 +1,210 @@
 const express = require("express");
-const cors = require("cors");
-const ethers = require("ethers");
-const sqlite3 = require("sqlite3");
+const sqlite3 = require("sqlite3").verbose();
 const { open } = require("sqlite");
-const fs = require("fs");
-const dotenv = require("dotenv");
-const path = require("path");
-
-dotenv.config();
+const { ethers } = require("ethers");
+require("dotenv").config();
 
 const app = express();
-app.use(cors());
 app.use(express.json());
 
-// Constants
-const PREFIX = "RENEW_NAME";
-const CONTRACT_ABI = JSON.parse(
-  fs.readFileSync(
-    path.join(
-      __dirname,
-      "../contracts/out/MessageVerification.sol/MessageVerification.json"
-    )
-  )
-).abi;
+const CONFIG = {
+  RPC_URL: process.env.RPC_URL,
+  CONTRACT_ADDRESS: process.env.CONTRACT_ADDRESS,
+  REWARD_TOKEN: process.env.REWARD_TOKEN,
+  PORT: process.env.PORT || 3000,
+};
 
-// Initialize database
-async function initDB() {
-  const db = await open({
-    filename: "intents.db",
+let provider;
+let contract;
+let tokenContract;
+let db;
+
+async function initDb() {
+  db = await open({
+    filename: "./messages.db",
     driver: sqlite3.Database,
   });
 
-  // Create intents table
   await db.exec(`
-    CREATE TABLE IF NOT EXISTS intents (
-      id INTEGER PRIMARY KEY AUTOINCREMENT,
-      signer TEXT NOT NULL,
-      signature TEXT NOT NULL,
-      names TEXT NOT NULL,
-      value TEXT NOT NULL,
-      timestamp INTEGER NOT NULL,
-      status TEXT DEFAULT 'pending'
-    )`);
-
-  // Create expiry table
-  await db.exec(`
-    CREATE TABLE IF NOT EXISTS name_expiry (
-      id INTEGER PRIMARY KEY AUTOINCREMENT,
-      name TEXT NOT NULL,
-      expiry_date INTEGER NOT NULL,
-      intent_id INTEGER,
-      FOREIGN KEY(intent_id) REFERENCES intents(id)
-    )`);
-
-  return db;
+        CREATE TABLE IF NOT EXISTS messages (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            user_address TEXT NOT NULL,
+            signature TEXT NOT NULL,
+            names TEXT NOT NULL,
+            value TEXT NOT NULL,
+            nonce INTEGER NOT NULL,
+            deadline INTEGER NOT NULL,
+            one_time BOOLEAN NOT NULL,
+            created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+            executed BOOLEAN DEFAULT FALSE,
+            execution_tx TEXT,
+            execution_time TIMESTAMP
+        );
+        CREATE INDEX IF NOT EXISTS idx_user_address ON messages(user_address);
+        CREATE UNIQUE INDEX IF NOT EXISTS idx_signature ON messages(signature);
+    `);
 }
 
-// Verify token balance
-async function verifyTokenBalance(address) {
-  const provider = new ethers.providers.JsonRpcProvider(process.env.RPC_URL);
-  const tokenContract = new ethers.Contract(
-    process.env.TOKEN_ADDRESS,
-    ["function balanceOf(address) view returns (uint256)"],
-    provider
-  );
+async function initContracts() {
+  provider = new ethers.providers.JsonRpcProvider(CONFIG.RPC_URL);
 
-  const balance = await tokenContract.balanceOf(address);
-  const requiredBalance = ethers.utils.parseUnits(
-    process.env.REQUIRED_TOKEN_AMOUNT,
-    18
-  );
+  const abi = [
+    "function calculateIntentHash(string[] calldata names, uint256 value, uint256 nonce, uint256 deadline, bool oneTime) public pure returns (bytes32)",
+    "function isNameExpiringSoon(string memory name) public view returns (bool)",
+    "function getNamePrice(string memory name) public view returns (uint256)",
+    "function getTotalPrice(string[] memory names) public view returns (uint256)",
+  ];
 
-  return balance.gte(requiredBalance);
+  contract = new ethers.Contract(CONFIG.CONTRACT_ADDRESS, abi, provider);
+
+  const tokenAbi = [
+    "function balanceOf(address owner) view returns (uint256)",
+    "function allowance(address owner, address spender) view returns (uint256)",
+  ];
+
+  tokenContract = new ethers.Contract(CONFIG.REWARD_TOKEN, tokenAbi, provider);
 }
 
-// Get ENS expiry dates
-async function getExpiryDates(names) {
-  const provider = new ethers.providers.JsonRpcProvider(process.env.RPC_URL);
-  const contract = new ethers.Contract(
-    process.env.CONTRACT_ADDRESS,
-    CONTRACT_ABI,
-    provider
-  );
+async function validateMessage(message) {
+  const { names, value, nonce, deadline, oneTime, signature } = message;
 
-  const expiryDates = [];
-  for (const name of names) {
-    try {
-      const expiry = await contract.getNameExpiry(name);
-      expiryDates.push({
-        name,
-        expiry: expiry.toNumber(),
-      });
-    } catch (error) {
-      console.error(`Error getting expiry for ${name}:`, error);
-      expiryDates.push({
-        name,
-        expiry: 0,
-        error: error.message,
-      });
-    }
+  if (!names || !Array.isArray(names) || names.length === 0) {
+    throw new Error("Invalid names array");
   }
 
-  return expiryDates;
+  if (!ethers.utils.isHexString(signature) || signature.length !== 132) {
+    throw new Error("Invalid signature format");
+  }
+
+  try {
+    const messageHash = await contract.calculateIntentHash(
+      names,
+      value,
+      nonce,
+      deadline,
+      oneTime
+    );
+    const messageHashBytes = ethers.utils.arrayify(messageHash);
+    const ethSignedMessageHash = ethers.utils.hashMessage(messageHashBytes);
+    const signer = ethers.utils.recoverAddress(ethSignedMessageHash, signature);
+
+    const balance = await tokenContract.balanceOf(signer);
+    if (balance.lt(ethers.BigNumber.from(value))) {
+      throw new Error("Insufficient token balance");
+    }
+
+    const allowance = await tokenContract.allowance(
+      signer,
+      CONFIG.CONTRACT_ADDRESS
+    );
+    if (allowance.lt(ethers.BigNumber.from(value))) {
+      throw new Error("Insufficient token allowance");
+    }
+
+    for (const name of names) {
+      const isExpiring = await contract.isNameExpiringSoon(name);
+      if (!isExpiring) {
+        throw new Error(`Name ${name} is not expiring soon`);
+      }
+    }
+
+    return { signer, messageHash };
+  } catch (error) {
+    throw new Error(`Validation failed: ${error.message}`);
+  }
 }
 
-// Initialize DB connection
-let db;
-(async () => {
-  db = await initDB();
-})();
-
-// API Endpoints
-app.post("/api/verify-intent", async (req, res) => {
+app.post("/api/messages", async (req, res) => {
   try {
-    const { names, value, signature } = req.body;
+    const message = req.body;
+    console.log("Received message:", message);
 
-    // Basic input validation
-    if (!Array.isArray(names) || !names.length || !value || !signature) {
-      return res.status(400).json({ error: "Invalid input parameters" });
-    }
+    const { signer, messageHash } = await validateMessage(message);
+    console.log("Validation passed:", { signer, messageHash });
 
-    // Recreate message hash
-    const messageHash = ethers.utils.keccak256(
-      ethers.utils.defaultAbiCoder.encode(
-        ["string", "string[]", "uint256"],
-        [PREFIX, names, value]
-      )
-    );
-
-    // Verify signature
-    const msgHash = ethers.utils.hashMessage(
-      ethers.utils.arrayify(messageHash)
-    );
-    const signer = ethers.utils.recoverAddress(msgHash, signature);
-
-    // Verify token balance
-    const hasEnoughTokens = await verifyTokenBalance(signer);
-    if (!hasEnoughTokens) {
-      return res.status(403).json({ error: "Insufficient token balance" });
-    }
-
-    // Get expiry dates
-    const expiryDates = await getExpiryDates(names);
-
-    // Store in database
-    const result = await db.run(
-      `INSERT INTO intents (signer, signature, names, value, timestamp) 
-       VALUES (?, ?, ?, ?, ?)`,
+    await db.run(
+      `INSERT INTO messages 
+            (user_address, signature, names, value, nonce, deadline, one_time) 
+            VALUES (?, ?, ?, ?, ?, ?, ?)`,
       [
         signer,
-        signature,
-        JSON.stringify(names),
-        value,
-        Math.floor(Date.now() / 1000),
+        message.signature,
+        JSON.stringify(message.names),
+        message.value,
+        message.nonce,
+        message.deadline,
+        message.oneTime ? 1 : 0,
       ]
     );
 
-    // Store expiry dates
-    for (const { name, expiry } of expiryDates) {
-      await db.run(
-        `INSERT INTO name_expiry (name, expiry_date, intent_id) 
-         VALUES (?, ?, ?)`,
-        [name, expiry, result.lastID]
-      );
-    }
-
-    // Write expiry dates to file
-    const expiryLog = {
-      intentId: result.lastID,
-      signer,
-      timestamp: new Date().toISOString(),
-      expiryDates,
-    };
-
-    fs.appendFileSync("expiry_log.jsonl", JSON.stringify(expiryLog) + "\n");
-
     res.json({
-      success: true,
-      intentId: result.lastID,
-      signer,
-      expiryDates,
+      status: "success",
+      data: { signer, messageHash },
     });
   } catch (error) {
-    console.error("Error processing intent:", error);
-    res.status(500).json({ error: error.message });
+    console.error("Error processing message:", error);
+    res.status(400).json({
+      status: "error",
+      error: error.message,
+    });
   }
 });
 
-// Get intents for an address
-app.get("/api/intents/:address", async (req, res) => {
+app.get("/api/messages/:address", async (req, res) => {
   try {
-    const intents = await db.all(
-      `SELECT i.*, GROUP_CONCAT(ne.name || ':' || ne.expiry_date) as expiry_data
-       FROM intents i
-       LEFT JOIN name_expiry ne ON ne.intent_id = i.id
-       WHERE i.signer = ?
-       GROUP BY i.id
-       ORDER BY i.timestamp DESC`,
-      [req.params.address.toLowerCase()]
+    const messages = await db.all(
+      "SELECT * FROM messages WHERE user_address = ? ORDER BY created_at DESC",
+      [req.params.address]
     );
 
-    // Format the response
-    const formattedIntents = intents.map((intent) => ({
-      ...intent,
-      names: JSON.parse(intent.names),
-      expiryData: intent.expiry_data
-        ? Object.fromEntries(
-            intent.expiry_data.split(",").map((entry) => {
-              const [name, expiry] = entry.split(":");
-              return [name, parseInt(expiry)];
-            })
-          )
-        : {},
-    }));
-
-    res.json(formattedIntents);
+    res.json({
+      status: "success",
+      data: messages.map((msg) => ({
+        ...msg,
+        names: JSON.parse(msg.names),
+        oneTime: !!msg.one_time,
+        executed: !!msg.executed,
+      })),
+    });
   } catch (error) {
-    console.error("Error fetching intents:", error);
-    res.status(500).json({ error: error.message });
+    console.error("Error fetching messages:", error);
+    res.status(500).json({
+      status: "error",
+      error: error.message,
+    });
   }
 });
 
-// Get all expiry dates
-app.get("/api/expiry-dates", async (req, res) => {
+app.put("/api/messages/:id/executed", async (req, res) => {
   try {
-    const expiryDates = await db.all(
-      `SELECT name, expiry_date, intent_id 
-       FROM name_expiry 
-       ORDER BY expiry_date ASC`
+    const { tx_hash } = req.body;
+    if (!tx_hash) throw new Error("Transaction hash required");
+
+    await db.run(
+      `UPDATE messages 
+            SET executed = TRUE, 
+                execution_tx = ?, 
+                execution_time = CURRENT_TIMESTAMP 
+            WHERE id = ?`,
+      [tx_hash, req.params.id]
     );
-    res.json(expiryDates);
+
+    res.json({ status: "success" });
   } catch (error) {
-    console.error("Error fetching expiry dates:", error);
-    res.status(500).json({ error: error.message });
+    console.error("Error updating message:", error);
+    res.status(500).json({
+      status: "error",
+      error: error.message,
+    });
   }
 });
 
-const PORT = process.env.PORT || 3000;
-app.listen(PORT, () => {
-  console.log(`Server running on port ${PORT}`);
-});
+async function start() {
+  await initDb();
+  await initContracts();
+  app.listen(CONFIG.PORT, () => {
+    console.log(`Server running on port ${CONFIG.PORT}`);
+  });
+}
+
+start().catch(console.error);

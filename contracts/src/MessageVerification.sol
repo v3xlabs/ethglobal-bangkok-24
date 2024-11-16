@@ -1,4 +1,5 @@
-pragma solidity ^0.8.19;
+// SPDX-License-Identifier: MIT
+pragma solidity ^0.8.25;
 import "./interfaces/IETHRegistrarController.sol";
 import "./interfaces/IBaseRegistrar.sol";
 import "./interfaces/IPriceOracle.sol";
@@ -45,7 +46,7 @@ contract MessageVerification {
 
     function isNameExpiringSoon(string memory name) public view returns (bool) {
         uint256 expiryDate = getNameExpiry(name);
-        return expiryDate > 0 && expiryDate <= block.timestamp + 30 days;
+        return expiryDate > 0 && expiryDate <= block.timestamp + 600 days;
     }
 
     function calculateIntentHash(string[] memory names, uint256 value, uint256 nonce, uint256 deadline, bool oneTime) public pure returns (bytes32) {
