@@ -13,7 +13,7 @@ export const Route = createRootRoute({
                         <ConnectKitButton />
                     </div>
                 </div>
-                <div className="max-w-xl mx-auto">
+                <div className="max-w-3xl mx-auto">
                     <Outlet />
                 </div>
                 <TanStackRouterDevtools />

@@ -1,11 +1,12 @@
 import { Button, Card, Helper, Tag, Typography } from "@ensdomains/thorin";
 import { useQuery } from "@tanstack/react-query";
-import { createLazyFileRoute } from "@tanstack/react-router";
+import { createLazyFileRoute, Link } from "@tanstack/react-router";
 import { match } from "ts-pattern";
-import { Header } from "../components/Header";
-import { Action } from "../types";
+import { useAccount } from "wagmi";
+import { Header } from "../../components/Header";
+import { Action } from "../../types";
 
-export const Route = createLazyFileRoute("/list")({
+export const Route = createLazyFileRoute("/list/")({
     component: Index,
 });
 
@@ -18,7 +19,7 @@ export const Route = createLazyFileRoute("/list")({
  */
 
 // eslint-disable-next-line @typescript-eslint/no-unused-vars
-const getAllActions = async (owner: string): Promise<Action[]> => {
+const getActions = async (owner: string): Promise<Action[]> => {
     // Temporary storage of actions in local storage
     const stored = localStorage.getItem("actions");
     if (!stored) {
@@ -26,7 +27,8 @@ const getAllActions = async (owner: string): Promise<Action[]> => {
     }
 
     try {
-        return JSON.parse(stored) as Action[];
+        const actions = JSON.parse(stored) as Action[];
+        return actions.filter((action) => action.owner === owner);
     } catch {
         return [];
     }
@@ -54,26 +56,32 @@ const ActionRow = ({ action }: { action: Action }) => {
 };
 
 function Index() {
+    const { address } = useAccount();
     const { data: actions } = useQuery({
-        queryKey: ["actions", "all"],
-        queryFn: () => getAllActions("0x0"),
+        queryKey: ["actions", address],
+        queryFn: () => getActions(address ?? "0x0"),
     });
 
     return (
         <div className="space-y-4">
             <Header />
-            <Typography>
-                Add your ENS names to the list below to automatically renew them
-                when needed.
-            </Typography>
+            <div className="flex justify-between items-center">
+                <Typography>
+                    Add your ENS names to the list below to automatically renew
+                    them when needed.
+                </Typography>
+                <Link to="/list/all">View all actions</Link>
+            </div>
             <hr />
-            <Card title="All Actions">
+            <Card title="Your Actions">
                 <ul>
                     {actions?.map((action) => (
                         <ActionRow key={action.type} action={action} />
                     ))}
                 </ul>
-                {actions?.length === 0 && <Helper>No actions found</Helper>}
+                {actions?.length === 0 && (
+                    <Helper>You have not created any actions yet</Helper>
+                )}
                 <Button as={"a"} href="/action/new">
                     Create New Action
                 </Button>

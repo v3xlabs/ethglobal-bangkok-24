@@ -16,23 +16,30 @@ import { Route as rootRoute } from './routes/__root'
 
 // Create Virtual Routes
 
-const ListLazyImport = createFileRoute('/list')()
 const IndexLazyImport = createFileRoute('/')()
+const ListIndexLazyImport = createFileRoute('/list/')()
+const ListAllLazyImport = createFileRoute('/list/all')()
 const ActionNewLazyImport = createFileRoute('/action/new')()
 
 // Create/Update Routes
-
-const ListLazyRoute = ListLazyImport.update({
-  id: '/list',
-  path: '/list',
-  getParentRoute: () => rootRoute,
-} as any).lazy(() => import('./routes/list.lazy').then((d) => d.Route))
 
 const IndexLazyRoute = IndexLazyImport.update({
   id: '/',
   path: '/',
   getParentRoute: () => rootRoute,
 } as any).lazy(() => import('./routes/index.lazy').then((d) => d.Route))
+
+const ListIndexLazyRoute = ListIndexLazyImport.update({
+  id: '/list/',
+  path: '/list/',
+  getParentRoute: () => rootRoute,
+} as any).lazy(() => import('./routes/list/index.lazy').then((d) => d.Route))
+
+const ListAllLazyRoute = ListAllLazyImport.update({
+  id: '/list/all',
+  path: '/list/all',
+  getParentRoute: () => rootRoute,
+} as any).lazy(() => import('./routes/list/all.lazy').then((d) => d.Route))
 
 const ActionNewLazyRoute = ActionNewLazyImport.update({
   id: '/action/new',
@@ -51,18 +58,25 @@ declare module '@tanstack/react-router' {
       preLoaderRoute: typeof IndexLazyImport
       parentRoute: typeof rootRoute
     }
-    '/list': {
-      id: '/list'
-      path: '/list'
-      fullPath: '/list'
-      preLoaderRoute: typeof ListLazyImport
-      parentRoute: typeof rootRoute
-    }
     '/action/new': {
       id: '/action/new'
       path: '/action/new'
       fullPath: '/action/new'
       preLoaderRoute: typeof ActionNewLazyImport
+      parentRoute: typeof rootRoute
+    }
+    '/list/all': {
+      id: '/list/all'
+      path: '/list/all'
+      fullPath: '/list/all'
+      preLoaderRoute: typeof ListAllLazyImport
+      parentRoute: typeof rootRoute
+    }
+    '/list/': {
+      id: '/list/'
+      path: '/list'
+      fullPath: '/list'
+      preLoaderRoute: typeof ListIndexLazyImport
       parentRoute: typeof rootRoute
     }
   }
@@ -72,42 +86,47 @@ declare module '@tanstack/react-router' {
 
 export interface FileRoutesByFullPath {
   '/': typeof IndexLazyRoute
-  '/list': typeof ListLazyRoute
   '/action/new': typeof ActionNewLazyRoute
+  '/list/all': typeof ListAllLazyRoute
+  '/list': typeof ListIndexLazyRoute
 }
 
 export interface FileRoutesByTo {
   '/': typeof IndexLazyRoute
-  '/list': typeof ListLazyRoute
   '/action/new': typeof ActionNewLazyRoute
+  '/list/all': typeof ListAllLazyRoute
+  '/list': typeof ListIndexLazyRoute
 }
 
 export interface FileRoutesById {
   __root__: typeof rootRoute
   '/': typeof IndexLazyRoute
-  '/list': typeof ListLazyRoute
   '/action/new': typeof ActionNewLazyRoute
+  '/list/all': typeof ListAllLazyRoute
+  '/list/': typeof ListIndexLazyRoute
 }
 
 export interface FileRouteTypes {
   fileRoutesByFullPath: FileRoutesByFullPath
-  fullPaths: '/' | '/list' | '/action/new'
+  fullPaths: '/' | '/action/new' | '/list/all' | '/list'
   fileRoutesByTo: FileRoutesByTo
-  to: '/' | '/list' | '/action/new'
-  id: '__root__' | '/' | '/list' | '/action/new'
+  to: '/' | '/action/new' | '/list/all' | '/list'
+  id: '__root__' | '/' | '/action/new' | '/list/all' | '/list/'
   fileRoutesById: FileRoutesById
 }
 
 export interface RootRouteChildren {
   IndexLazyRoute: typeof IndexLazyRoute
-  ListLazyRoute: typeof ListLazyRoute
   ActionNewLazyRoute: typeof ActionNewLazyRoute
+  ListAllLazyRoute: typeof ListAllLazyRoute
+  ListIndexLazyRoute: typeof ListIndexLazyRoute
 }
 
 const rootRouteChildren: RootRouteChildren = {
   IndexLazyRoute: IndexLazyRoute,
-  ListLazyRoute: ListLazyRoute,
   ActionNewLazyRoute: ActionNewLazyRoute,
+  ListAllLazyRoute: ListAllLazyRoute,
+  ListIndexLazyRoute: ListIndexLazyRoute,
 }
 
 export const routeTree = rootRoute
@@ -121,18 +140,22 @@ export const routeTree = rootRoute
       "filePath": "__root.tsx",
       "children": [
         "/",
-        "/list",
-        "/action/new"
+        "/action/new",
+        "/list/all",
+        "/list/"
       ]
     },
     "/": {
       "filePath": "index.lazy.tsx"
     },
-    "/list": {
-      "filePath": "list.lazy.tsx"
-    },
     "/action/new": {
       "filePath": "action/new.lazy.tsx"
+    },
+    "/list/all": {
+      "filePath": "list/all.lazy.tsx"
+    },
+    "/list/": {
+      "filePath": "list/index.lazy.tsx"
     }
   }
 }

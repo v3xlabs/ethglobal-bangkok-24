@@ -7,9 +7,10 @@ export const Header = () => {
             <Heading>ENS Auto Renewal</Heading>
             <div className="flex gap-4">
                 <Link to="/">Home</Link>
-                <Link to="/list">View all actions</Link>
+                <Link to="/list">View actions</Link>
                 <Link to="/action/new">Create new action</Link>
             </div>
+            <hr className="w-full pt-4" />
         </header>
     );
 };
