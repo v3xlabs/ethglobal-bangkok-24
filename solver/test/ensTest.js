@@ -1,113 +1,183 @@
+const { ethers } = require("ethers");
+const MessageVerification = require("../../contracts/out/MessageVerification.sol/MessageVerification.json");
+const IERC20 = require("../../contracts/out/IERC20.sol/IERC20.json");
 require("dotenv").config();
-const ethers = require("ethers");
-const fs = require("fs");
 
-async function debug() {
-  const provider = new ethers.providers.JsonRpcProvider(process.env.RPC_URL);
-  const wallet = new ethers.Wallet(process.env.PRIVATE_KEY, provider);
+const CONFIG = {
+  // CHAIN_ID: process.env.ID,
+  RPC_URL: process.env.RPC_URL || "http://localhost:8545",
+  PRIVATE_KEY: process.env.PRIVATE_KEY,
+  CONTRACT_ADDRESS: process.env.CONTRACT_ADDRESS,
+  REWARD_TOKEN: process.env.REWARD_TOKEN,
+};
 
-  const names = ["test1", "test2"];
-  const value = ethers.BigNumber.from("123456789");
+async function main() {
+  //   validateConfig();
 
-  console.log("\n=== Message Components ===");
-  const PREFIX = "RENEW_NAME";
-
-  const messageHash = ethers.utils.keccak256(
-    ethers.utils.defaultAbiCoder.encode(
-      ["string", "string[]", "uint256"],
-      [PREFIX, names, value]
-    )
-  );
-  console.log(`Original message hash: ${messageHash}`);
-
-  const ethSignedMsg = ethers.utils.arrayify(messageHash);
-  console.log(`Message to sign: ${ethers.utils.hexlify(ethSignedMsg)}`);
-
-  const flatSig = await wallet.signMessage(ethSignedMsg);
-  console.log(`\n=== Signature Details ===`);
-  console.log(`Signature: ${flatSig}`);
-
-  const msgHash = ethers.utils.hashMessage(ethSignedMsg);
-  const recoveredAddress = ethers.utils.recoverAddress(msgHash, flatSig);
-  console.log(`\n=== Verification ===`);
-  console.log(`Recovered address: ${recoveredAddress}`);
-  console.log(`Expected address: ${wallet.address}`);
-  console.log(
-    `Signature valid locally: ${
-      recoveredAddress.toLowerCase() === wallet.address.toLowerCase()
-    }`
-  );
-
-  const contractJson = JSON.parse(
-    fs.readFileSync(
-      "../contracts/out/MessageVerification.sol/MessageVerification.json"
-    )
-  );
+  const provider = new ethers.providers.JsonRpcProvider(CONFIG.RPC_URL);
+  const wallet = new ethers.Wallet(CONFIG.PRIVATE_KEY, provider);
   const contract = new ethers.Contract(
-    process.env.CONTRACT_ADDRESS,
-    contractJson.abi,
+    CONFIG.CONTRACT_ADDRESS,
+    MessageVerification.abi,
+    wallet
+  );
+  const rewardToken = new ethers.Contract(
+    CONFIG.REWARD_TOKEN,
+    IERC20.abi,
     wallet
   );
 
-  console.log("\n=== Pre-Transaction Name Expiry ===");
-  for (let name of names) {
-    const expiry = await contract.getNameExpiry(name);
-    console.log(
-      `${name}.eth expiry before: ${new Date(expiry * 1000).toISOString()}`
-    );
-  }
+  const names = ["vitalik"];
+  const value = ethers.utils.parseEther("0.1");
+  const nonce = Date.now();
+  const deadline = Math.floor(Date.now() / 1000) + 3600;
+  const oneTime = true;
 
-  console.log("\n=== Price Calculation ===");
-  let total = ethers.BigNumber.from(0);
-  for (let name of names) {
-    const price = await contract.getNamePrice(name);
-    total = total.add(price);
-    console.log(`Price for ${name}: ${ethers.utils.formatEther(price)} ETH`);
-  }
-  console.log(`Total needed: ${ethers.utils.formatEther(total)} ETH`);
-
-  console.log("\n=== Sending Transaction ===");
   try {
-    const tx = await contract.verifyAndStoreMessage(names, value, flatSig, {
-      value: total,
-      gasLimit: 500000,
+    console.log("\nContract Info:");
+    console.log("Wallet:", wallet.address);
+    console.log("Contract:", contract.address);
+    console.log("Reward Token:", CONFIG.REWARD_TOKEN);
+    console.log("Names:", names);
+
+    console.log("\nChecking balances:");
+    const ethBalance = await provider.getBalance(wallet.address);
+    console.log("ETH balance:", ethers.utils.formatEther(ethBalance), "ETH");
+    const tokenBalance = await rewardToken.balanceOf(wallet.address);
+    console.log("Token balance:", ethers.utils.formatEther(tokenBalance));
+
+    console.log("\nChecking approval:");
+    const currentAllowance = await rewardToken.allowance(
+      wallet.address,
+      contract.address
+    );
+    console.log(
+      "Current allowance:",
+      ethers.utils.formatEther(currentAllowance)
+    );
+
+    if (currentAllowance.lt(value)) {
+      console.log("Approving tokens...");
+      const approveTx = await rewardToken.approve(
+        contract.address,
+        ethers.constants.MaxUint256
+      );
+      await approveTx.wait();
+      console.log("Approval confirmed");
+    }
+
+    console.log("\nChecking expiry:");
+    for (const name of names) {
+      const expiry = await contract.getNameExpiry(name);
+      console.log(`${name} expiry:`, new Date(expiry.toNumber() * 1000));
+      const isExpiring = await contract.isNameExpiringSoon(name);
+      console.log(`${name} expiring soon:`, isExpiring);
+    }
+
+    console.log("\nGetting prices:");
+    const prices = await Promise.all(
+      names.map((name) => contract.getNamePrice(name))
+    );
+    prices.forEach((price, i) => {
+      console.log(`${names[i]} price:`, ethers.utils.formatEther(price), "ETH");
     });
-    console.log(`Transaction sent: ${tx.hash}`);
+
+    const totalPrice = await contract.getTotalPrice(names);
+    console.log("Total price:", ethers.utils.formatEther(totalPrice), "ETH");
+
+    console.log("\nPreparing signature:");
+    const messageHash = await contract.calculateIntentHash(
+      names,
+      value,
+      nonce,
+      deadline,
+      oneTime
+    );
+    console.log("Message hash:", messageHash);
+    const messageHashBytes = ethers.utils.arrayify(messageHash);
+    const signature = await wallet.signMessage(messageHashBytes);
+    console.log("Signature:", signature);
+
+    console.log("\nSubmitting transaction...");
+    const tx = await contract.executeRenewal(
+      names,
+      value,
+      nonce,
+      deadline,
+      oneTime,
+      signature,
+      {
+        value: totalPrice,
+        gasLimit: 500000,
+      }
+    );
+
+    console.log("Transaction hash:", tx.hash);
+    console.log("Waiting for confirmation...");
+
     const receipt = await tx.wait();
     console.log(
-      `Transaction status: ${receipt.status === 1 ? "Success" : "Failed"}`
+      "\nTransaction confirmed:",
+      receipt.status === 1 ? "Success" : "Failed"
+    );
+    console.log("Gas used:", receipt.gasUsed.toString());
+
+    if (receipt.events) {
+      for (const event of receipt.events) {
+        if (event.event === "IntentExecuted") {
+          console.log("\nIntent executed:");
+          console.log("User:", event.args.user);
+          console.log("Intent hash:", event.args.intentHash);
+          console.log("Names:", event.args.names);
+        } else if (event.event === "RewardPaid") {
+          console.log("\nReward paid:");
+          console.log("Executor:", event.args.executor);
+          console.log("Owner:", event.args.intentOwner);
+          console.log(
+            "Value:",
+            ethers.utils.formatEther(event.args.value),
+            "ETH"
+          );
+        }
+      }
+    }
+
+    console.log("\nChecking new balances:");
+    const newEthBalance = await provider.getBalance(wallet.address);
+    console.log(
+      "New ETH balance:",
+      ethers.utils.formatEther(newEthBalance),
+      "ETH"
+    );
+    const newTokenBalance = await rewardToken.balanceOf(wallet.address);
+    console.log(
+      "New token balance:",
+      ethers.utils.formatEther(newTokenBalance)
     );
 
-    await new Promise((resolve) => setTimeout(resolve, 5000));
-
-    console.log("\n=== Post-Transaction Message Checks ===");
-    const messageCount = await contract.getUserMessageCount(wallet.address);
-    console.log(`Total message count for user: ${messageCount}`);
-
-    const latestMessageIndex = messageCount.sub(1);
-    const [storedMessages, storedValue] = await contract.getUserMessage(
-      wallet.address,
-      latestMessageIndex
-    );
-    console.log("\nLatest stored message details:");
-    console.log(`Message index: ${latestMessageIndex}`);
-    console.log(`Stored names: ${storedMessages.join(", ")}`);
-    console.log(`Stored value: ${storedValue}`);
-
-    console.log("\n=== Post-Transaction Name Expiry ===");
-    for (let name of names) {
+    console.log("\nChecking new expiry:");
+    for (const name of names) {
       const expiry = await contract.getNameExpiry(name);
-      console.log(
-        `${name}.eth expiry after: ${new Date(expiry * 1000).toISOString()}`
-      );
+      console.log(`${name} new expiry:`, new Date(expiry.toNumber() * 1000));
     }
-  } catch (e) {
-    console.error("Transaction failed:", e.message);
-    if (e.error && e.error.data) {
-      const reason = ethers.utils.toUtf8String("0x" + e.error.data.slice(138));
-      console.log("Revert reason:", reason);
+  } catch (error) {
+    console.error("\nError occurred:");
+    if (error.reason) console.error("Reason:", error.reason);
+    if (error.error?.message)
+      console.error("Error message:", error.error.message);
+    if (error.receipt) {
+      console.error("Transaction status:", error.receipt.status);
+      console.error("Gas used:", error.receipt.gasUsed.toString());
     }
+    throw error;
   }
 }
 
-debug().catch(console.error);
+if (require.main === module) {
+  main().catch((error) => {
+    console.error(error);
+    process.exit(1);
+  });
+}
+
+module.exports = { main };
