@@ -1,12 +1,31 @@
 # Intent-Based ENS Solver Network For ENS Auto-Renewals
 
+A decentralized public good enabling gasless, automated ENS domain renewals through intent-based transactions and off-chain solvers.
+
+## Intent Management:
+
+Users generate signed intents specifying: target ENS domain names, maximum price parameters (renewal fee + gas fee + solver reward), renewal conditions (expiration threshold, gas price threshold).
+
+## Off-Chain Infrastructure:
+
+- REST API endpoints for intent submission and validation
+- Local mempool implementation for intent storage and management
+- Continuous monitoring of: ENS domain expiration timestamps, Ethereum network gas prices, user token balances.
+
+## Value Proposition:
+
+- Eliminates manual renewal tracking
+- Reduces gas costs thanks to execution timing
+- Improves UX through gasless intent submission
+- Ensures ENS domains for individuals and important projects in web3 don't expire
+
 ## Frontend
 
-ToDo
+User friendly UI with intent creation and management.
 
 ## Contracts
 
-ToDo
+Deployed to local fork of Ethereum Sepolia.
 
 ## API Overview
 

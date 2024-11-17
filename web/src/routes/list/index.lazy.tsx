@@ -7,7 +7,7 @@ import { Header } from "../../components/Header";
 import { Action } from "../../types";
 
 export const Route = createLazyFileRoute("/list/")({
-    component: Index,
+  component: Index,
 });
 
 /**
@@ -20,72 +20,73 @@ export const Route = createLazyFileRoute("/list/")({
 
 // eslint-disable-next-line @typescript-eslint/no-unused-vars
 const getActions = async (owner: string): Promise<Action[]> => {
-    // Temporary storage of actions in local storage
-    const stored = localStorage.getItem("actions");
-    if (!stored) {
-        return [];
-    }
+  // Temporary storage of actions in local storage
+  const stored = localStorage.getItem("actions");
+  if (!stored) {
+    return [];
+  }
 
-    try {
-        const actions = JSON.parse(stored) as Action[];
-        return actions.filter((action) => action.owner === owner);
-    } catch {
-        return [];
-    }
+  try {
+    const actions = JSON.parse(stored) as Action[];
+    return actions.filter((action) => action.owner === owner);
+  } catch {
+    return [];
+  }
 };
 
 const ActionRow = ({ action }: { action: Action }) => {
-    return (
-        <li className="gap-2">
-            <Tag display="block">
-                {match(action.type)
-                    .with("RENEW_NAME", () => "Renew Name")
-                    .otherwise(() => "Unknown")}
-            </Tag>
+  return (
+    <li className="gap-2">
+      <Tag display="block">
+        {match(action.type)
+          .with("RENEW_NAME", () => "Renew Name")
+          .otherwise(() => "Unknown")}
+      </Tag>
 
-            <div className="flex gap-2 ml-1 flex-wrap">
-                <Typography fontVariant="body">
-                    {action.names.join(", ")}
-                </Typography>
-                <Typography fontVariant="small" className="ml-auto">
-                    {action.reward} GWEI
-                </Typography>
-            </div>
-        </li>
-    );
+      <div className="flex gap-2 ml-1 flex-wrap">
+        <Typography fontVariant="body">{action.names.join(", ")}</Typography>
+        <Typography fontVariant="small" className="ml-auto">
+          {action.reward} GWEI
+        </Typography>
+        <a href="https://eth-sepolia.blockscout.com/tx/0x604aaa358a51ce0e114ea6d232394d8cf38536510c64d00a7eda6f37ab2db303">
+          <Button className="my-4">View On Blockscout</Button>
+        </a>
+      </div>
+    </li>
+  );
 };
 
 function Index() {
-    const { address } = useAccount();
-    const { data: actions } = useQuery({
-        queryKey: ["actions", address],
-        queryFn: () => getActions(address ?? "0x0"),
-    });
+  const { address } = useAccount();
+  const { data: actions } = useQuery({
+    queryKey: ["actions", address],
+    queryFn: () => getActions(address ?? "0x0"),
+  });
 
-    return (
-        <div className="space-y-4">
-            <Header />
-            <div className="flex justify-between items-center">
-                <Typography>
-                    Add your ENS names to the list below to automatically renew
-                    them when needed.
-                </Typography>
-                <Link to="/list/all">View all actions</Link>
-            </div>
-            <hr />
-            <Card title="Your Actions">
-                <ul>
-                    {actions?.map((action) => (
-                        <ActionRow key={action.type} action={action} />
-                    ))}
-                </ul>
-                {actions?.length === 0 && (
-                    <Helper>You have not created any actions yet</Helper>
-                )}
-                <Button as={"a"} href="/action/new">
-                    Create New Action
-                </Button>
-            </Card>
-        </div>
-    );
+  return (
+    <div className="space-y-4">
+      <Header />
+      <div className="flex justify-between items-center">
+        <Typography>
+          Add your ENS names to the list below to automatically renew them when
+          needed.
+        </Typography>
+        <Link to="/list/all">View all actions</Link>
+      </div>
+      <hr />
+      <Card title="Your Actions">
+        <ul>
+          {actions?.map((action) => (
+            <ActionRow key={action.type} action={action} />
+          ))}
+        </ul>
+        {actions?.length === 0 && (
+          <Helper>You have not created any actions yet</Helper>
+        )}
+        {/* <Button as={"a"} href="/action/new">
+          Create New Action
+        </Button> */}
+      </Card>
+    </div>
+  );
 }
