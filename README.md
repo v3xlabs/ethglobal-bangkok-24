@@ -2,6 +2,32 @@
 
 A decentralized public good enabling gasless, automated ENS domain renewals through intent-based transactions and off-chain solvers.
 
+
+```mermaid
+
+flowchart LR
+    User[Domain Owner]
+    Solver[Solver]
+    MV[MessageVerification]
+    RC[ENSController]
+    RT[RewardToken]
+    
+    User -->|Sign Intent| Solver
+    Solver -->|Monitor| Solver
+    Solver -->|Execute ETH| MV
+    MV -->|Verify| MV
+    MV -->|Renew ETH| RC
+    MV -->|Reward| RT
+    MV -->|Refund| Solver
+
+    style MV fill:#b9b,stroke:#111
+    style RC fill:#b9b,stroke:#111
+    style RT fill:#b9b,stroke:#222
+    style User fill:#c8d,stroke:#222
+    style Solver fill:#c8d,stroke:#111
+
+```
+
 ## Intent Management:
 
 Users generate signed intents specifying: target ENS domain names, maximum price parameters (renewal fee + gas fee + solver reward), renewal conditions (expiration threshold, gas price threshold).
